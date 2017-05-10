@@ -1,0 +1,220 @@
+#include "LPC11xx.h"  // LPC11xxÍâÉè¼Ä´æÆ÷
+#include "string.h"
+
+#define LCD_RS_LOW 		LPC_GPIO2->DATA &= ~(1<<0)	//ÃüÁî×´Ì¬Òý½Å
+#define LCD_RS_HIGH		LPC_GPIO2->DATA |=  (1<<0)	//
+#define LCD_RW_LOW		LPC_GPIO2->DATA &= ~(1<<1)	//¶ÁÐ´Ê¹ÄÜÒý½Å
+#define LCD_RW_HIGH		LPC_GPIO2->DATA |=  (1<<1)	//
+#define LCD_E_LOW		  LPC_GPIO2->DATA &= ~(1<<2)	//Ê¹ÄÜ¶Ë
+#define LCD_E_HIGH		LPC_GPIO2->DATA |=  (1<<2)	//
+#define LCD_DATA_IN		LPC_GPIO2->DIR &= ~0xFFF	//ÉèÖÃ¶Ë¿ÚÎªÊäÈë
+#define LCD_DATA_OUT	LPC_GPIO2->DIR |=  0xFFF	//ÉèÖÃ¶Ë¿ÚÎªÊä³ö
+
+uint8_t table[10]={0x30,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39};
+uint8_t DispBuffer[4];
+uint8_t time[2];
+uint32_t timeCounter;
+uint8_t time_1s_ok;
+static volatile unsigned int ticks = 0;
+
+void Delayms(uint16_t ms)					
+{
+	SysTick->CTRL &= ~(1<<2);
+	SysTick->LOAD = 25000*ms-1;			
+	SysTick->VAL = 0;						
+	SysTick->CTRL = ((1<<1)|(1<<0));       
+	while(!ticks);						    
+	ticks = 0;							    
+	SysTick->CTRL = 0;	
+}
+/********************************************************************************
+* FunctionName   : SysTick_Handler()
+* Description    : ÏµÍ³½ÚÅÄ¶¨Ê±Æ÷ÖÐ¶Ï·þÎñº¯Êý
+* EntryParameter : None
+* ReturnValue    : None
+********************************************************************************/
+void SysTick_Handler(void)
+{
+	ticks++;
+}
+/********************************************************************************
+* FunctionName   : Busy_Check()
+* Description    : ÅÐ¶ÏLCDÄ£¿éÊÇ·ñÃ¦£¬±¾º¯ÊýÃ»ÓÐÈ¡µÚ8Î»£¬ÐèÒªµ÷ÓÃÕßÅÐ¶Ï
+* EntryParameter : None
+* ReturnValue    : ´ÓLCDÊý¾Ý¶Ë¿Ú¶ÁÈ¡µÄÊý¾Ý
+********************************************************************************/
+uint8_t Busy_Check()
+{
+ 	uint8_t LCD_Status;
+	LCD_RS_LOW;
+	LCD_RW_HIGH;
+	LCD_E_HIGH;	//ÒÔÉÏÎª²úÉú¶Á¿ØÖÆÐÅºÅ
+	Delayms(1);
+	
+//	LCD_DATA_IN;	//½«¶Ë¿ÚÉèÖÃÎªÊäÈë
+    LPC_GPIO2->DIR &= ~(0x7F8);
+    
+    LCD_Status = (LPC_GPIO2->DATA & 0x7F8) >> 3;	//¶ÁÈ¡¶Ë¿ÚÊý¾Ý
+//	LCD_DATA_OUT;	//½«¶Ë¿ÚÉèÖÃÎªÊä³ö
+	LPC_GPIO2->DIR |= 0x7F8;
+    
+	LCD_E_LOW;	
+	return LCD_Status;
+}
+
+void LCD_WriteCommand(uint32_t cmd)
+{
+ 	while((Busy_Check()	&	0x80)	==	0x80);	//ÅÐ¶ÏLCDÄ£¿éÊÇ·ñÃ¦
+	LCD_RS_LOW;
+	LCD_RW_LOW;
+	LCD_E_LOW;	//ÒÔÉÏÎª²úÉúÐ´¿ØÖÆÐÅºÅ
+    
+	LPC_GPIO2->DATA = ((cmd << 3) & 0x7F8) | 0x00;	//½«ÃüÁîÐ´Èë
+	Delayms(1);	
+	LCD_E_HIGH;
+	Delayms(1);
+	LCD_E_LOW;
+}
+/********************************************************************************
+* FunctionName   : LCD_WriteData()
+* Description    : Ð´ÏÔÊ¾Êý¾Ýº¯Êý
+* EntryParameter : dat:Êý¾Ý
+* ReturnValue    : None
+********************************************************************************/
+void LCD_WriteData(uint32_t dat)
+{
+ 	while((Busy_Check() & 0x80) == 0x80);	//ÅÐ¶ÏLCDÄ£¿éÊÇ·ñÃ¦
+	LCD_RS_HIGH;
+	LCD_RW_LOW;
+	LCD_E_LOW;	//ÒÔÉÏÎª²úÉúÐ´¿ØÖÆÐÅºÅ
+	LPC_GPIO2->DATA = ((dat << 3) & 0x7F8) | 0x01;	//½«Êý¾ÝÐ´Èë
+	Delayms(1);	
+	LCD_E_HIGH;
+	Delayms(1);
+	LCD_E_LOW;
+}
+void LCD_IOInit(void)
+{
+  LPC_GPIO2->DIR |=0xFFF;
+}
+
+
+void DisplayScan()
+{
+	static uint16_t com;
+	com++;
+	if(com>=4)
+		com=0;
+	 switch(com)
+	{
+		case 0:
+			  LCD_WriteCommand(0x00);
+		    LCD_WriteData(DispBuffer [0]);
+			  break ;
+		case 1:
+			  LCD_WriteCommand(0x01);
+		    LCD_WriteData(DispBuffer [1]);
+		    break ;
+		case 2:
+			  LCD_WriteCommand(0x02);
+		    LCD_WriteData(DispBuffer [2]);
+		    break ;
+		case 3:
+			  LCD_WriteCommand(0x03);
+		    LCD_WriteData(DispBuffer [3]);
+		    break ;
+	}
+}
+
+void TimeToDisplayBuffer(void)
+{
+	uint8_t i,j=0;
+	for(i=0;i<2;i++)
+	{
+		DispBuffer[j++]=table[time[i]%10];
+		DispBuffer[j++]=table[time[i]/10];
+	}
+}
+
+
+
+
+
+void TIMER32_0_IRQHandler(void)
+{
+	DisplayScan();
+	if(++timeCounter>=500)
+	{
+		timeCounter=0;
+		time_1s_ok=1;
+	}
+	LPC_TMR32B0->IR=0x01;
+}	
+
+void Timer0Init(void)
+{
+   LPC_SYSCON->SYSAHBCLKCTRL |=(1<<9);
+	 LPC_TMR32B0->IR =0x01;
+	 LPC_TMR32B0->PR =0;
+	 LPC_TMR32B0->MCR=0x03;
+	 LPC_TMR32B0->MR0=SystemCoreClock/500;
+	 LPC_TMR32B0->TCR=0x01;
+	NVIC_EnableIRQ(TIMER_32_0_IRQn);
+}
+
+
+
+
+/********************************************************************************
+* FunctionName   : Delayms(uint16_t ms)
+* Description    : ÀûÓÃÏµÍ³¶¨Ê±Æ÷²úÉúºÁÃë¼¶ÑÓÊ±
+* EntryParameter : ms:ÎªÑÓÊ±²ÎÊý
+* ReturnValue    : None
+********************************************************************************/
+
+/********************************************************************************
+* FunctionName   : InitLCD()
+* Description    : ³õÊ¼»¯LCD¶Ë¿Ú²¢ÉèÖÃÆäÏÔÊ¾·½Ê½
+* EntryParameter : None
+* ReturnValue    : None
+********************************************************************************/
+void InitLCD()
+{
+	LCD_IOInit();	//³õÊ¼»¯LCDÓÃµ½µÄGPIO
+ 	LCD_WriteCommand(0x38);	//ÉèÖÃÎª8Î»×ÜÏß¡¢2ÐÐÏÔÊ¾¡¢5¡Á7µãÕó×ÖÌå
+	Delayms(1);	
+	LCD_WriteCommand(0x01);	//ÇåÆÁ£¬¹éHOMEÎ»
+	Delayms(1);	
+	LCD_WriteCommand(0x06);	//Êý¾ÝÊäÈëÎªÔöÁ¿·½Ê½£¬ÏÔÊ¾ÄÚÈÝ²»ÒÆ¶¯
+	Delayms(1);	
+	LCD_WriteCommand(0x0c);	//¿ªÏÔÊ¾£¬¹Ø±Õ¹â±ê£¬¹â±ê²»ÉÁË¸
+	Delayms(1);	
+}
+/********************************************************************************
+* FunctionName   : main()
+* Description    : Ö÷º¯Êý£¬ÔÚµÚÒ»ÐÐÆðÊ¼ÎªÖ¹¿ªÊ¼ÏÔÊ¾×Ö·û´®£¬Õ¼ÂúºóÁíÆðÒ»ÐÐ
+* EntryParameter : None
+* ReturnValue    : None
+********************************************************************************/
+int main()
+{
+	InitLCD();
+	Timer0Init();
+	 time[1]=00;
+	 time[0]=0;
+   TimeToDisplayBuffer();
+   while(1)
+   { 
+		 if(time_1s_ok==1)
+		 {  
+			 time_1s_ok=0;
+			 if(++time[0]>=60)
+			 {
+				 time[0]=0;
+				 if(++time[1]>=60)
+					 time[1]=0;
+			 }
+			 TimeToDisplayBuffer();
+		 }
+	 }
+}
